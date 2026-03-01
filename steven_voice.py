@@ -20,11 +20,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 APP_TITLE   = "Steven's Voice Workspace"
-APP_VERSION = "v1.0.0"
+APP_VERSION = "v1.1.0"
 CONFIG_DIR  = Path.home() / ".stevenvoice"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 HISTORY_DIR = CONFIG_DIR / "history"
 AUDIO_DIR   = CONFIG_DIR / "audio"
+DICT_FILE   = CONFIG_DIR / "dictionary.json"
 
 for d in (CONFIG_DIR, HISTORY_DIR, AUDIO_DIR):
     d.mkdir(parents=True, exist_ok=True)
@@ -77,6 +78,25 @@ def list_history() -> List[Path]:
 def load_history_entry(path: Path) -> Dict:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+def load_dictionary() -> List[Dict]:
+    if DICT_FILE.exists():
+        try:
+            with open(DICT_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def save_dictionary(entries: List[Dict]) -> None:
+    with open(DICT_FILE, "w", encoding="utf-8") as f:
+        json.dump(entries, f, ensure_ascii=False, indent=2)
+
+def apply_dictionary(text: str, entries: List[Dict]) -> str:
+    for e in entries:
+        if e.get("enabled", True) and e.get("old") and e.get("new") is not None:
+            text = text.replace(e["old"], e["new"])
+    return text
 
 
 class STTEngine:
@@ -167,9 +187,14 @@ class TTSEngine:
         elif s == "Darwin":
             subprocess.Popen(["afplay", audio_path])
         else:
-            for p in ("aplay", "paplay", "ffplay"):
+            players = {
+                "aplay":  [audio_path],
+                "paplay": [audio_path],
+                "ffplay": ["-nodisp", "-autoexit", audio_path],
+            }
+            for p, args in players.items():
                 if subprocess.call(["which", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
-                    subprocess.Popen([p, audio_path, "-nodisp", "-autoexit"],
+                    subprocess.Popen([p] + args,
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     return
 
@@ -297,6 +322,9 @@ class App(tk.Tk):
         ttk.Button(btn_row, text="📂 載入", command=self._load_audio).pack(side="left", padx=3)
         ttk.Button(btn_row, text="✏️ 潤稿", command=self._polish_async).pack(side="left", padx=3)
         ttk.Button(btn_row, text="💾 儲存", command=self._save_text).pack(side="left", padx=3)
+        ttk.Button(btn_row, text="📋 複製原文", command=lambda: self._copy_text(self._txt_raw)).pack(side="left", padx=3)
+        ttk.Button(btn_row, text="📋 複製整理", command=lambda: self._copy_text(self._txt_polish)).pack(side="left", padx=3)
+        ttk.Button(btn_row, text="📋 複製翻譯", command=lambda: self._copy_text(self._txt_trans)).pack(side="left", padx=3)
         tr_row = ttk.Frame(self._home)
         tr_row.pack(fill="x", padx=10, pady=2)
         ttk.Label(tr_row, text="翻譯來源:").pack(side="left")
@@ -428,9 +456,39 @@ class App(tk.Tk):
     def _build_dict_tab(self, nb):
         frm = ttk.Frame(nb)
         nb.add(frm, text="  字典  ")
-        ttk.Label(frm,
-                  text="用戶自訂字典（即將推出）\n\n可在此新增替換規則，自動修正常見語音辨識錯誤。",
-                  justify="center").pack(expand=True)
+        top = ttk.Frame(frm)
+        top.pack(fill="x", padx=10, pady=6)
+        ttk.Label(top, text="自訂替換規則（語音辨識自動修正）",
+                  font=("Microsoft JhengHei", 11, "bold")).pack(side="left")
+        btn_row = ttk.Frame(frm)
+        btn_row.pack(fill="x", padx=10, pady=4)
+        ttk.Button(btn_row, text="➕ 新增規則", command=self._dict_add).pack(side="left", padx=3)
+        ttk.Button(btn_row, text="🗑️ 刪除選取", command=self._dict_delete).pack(side="left", padx=3)
+        ttk.Button(btn_row, text="💾 儲存字典", style="Accent.TButton",
+                   command=self._dict_save).pack(side="left", padx=3)
+        cols = ("enabled", "old", "new")
+        self._dict_tree = ttk.Treeview(frm, columns=cols, show="headings", height=12)
+        self._dict_tree.heading("enabled", text="啟用")
+        self._dict_tree.heading("old", text="原始詞")
+        self._dict_tree.heading("new", text="替換為")
+        self._dict_tree.column("enabled", width=60, anchor="center")
+        self._dict_tree.column("old", width=200)
+        self._dict_tree.column("new", width=200)
+        self._dict_tree.bind("<Double-1>", self._dict_edit)
+        sb = ttk.Scrollbar(frm, orient="vertical", command=self._dict_tree.yview)
+        self._dict_tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y", padx=(0, 10))
+        self._dict_tree.pack(fill="both", expand=True, padx=(10, 0), pady=4)
+        add_row = ttk.Frame(frm)
+        add_row.pack(fill="x", padx=10, pady=6)
+        ttk.Label(add_row, text="原始詞:").pack(side="left")
+        self._dict_old_var = tk.StringVar()
+        ttk.Entry(add_row, textvariable=self._dict_old_var, width=20).pack(side="left", padx=4)
+        ttk.Label(add_row, text="替換為:").pack(side="left", padx=(8, 0))
+        self._dict_new_var = tk.StringVar()
+        ttk.Entry(add_row, textvariable=self._dict_new_var, width=20).pack(side="left", padx=4)
+        ttk.Button(add_row, text="加入", command=self._dict_add_from_entry).pack(side="left", padx=4)
+        self._dict_load()
 
     def _toggle_record(self):
         if not self.recorder._recording:
@@ -468,10 +526,21 @@ class App(tk.Tk):
             self.after(0, self._stat_status.set, "就緒")
 
     def _set_raw_text(self, text: str):
+        entries = self._get_dict_entries()
+        text = apply_dictionary(text, entries)
         self._txt_raw.delete("1.0", "end")
         self._txt_raw.insert("1.0", text)
         self._stat_chars.set(str(len(text)))
         self._stat_count.set(str(int(self._stat_count.get()) + 1))
+
+    def _copy_text(self, widget):
+        text = widget.get("1.0", "end").strip()
+        if not text:
+            self._set_status("無可複製的內容")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self._set_status("已複製到剪貼簿")
 
     def _load_audio(self):
         path = filedialog.askopenfilename(
@@ -503,8 +572,11 @@ class App(tk.Tk):
     def _polish_worker(self, text: str):
         try:
             result = self.llm.polish(text)
-            self.after(0, lambda: (self._txt_polish.delete("1.0", "end"),
-                                   self._txt_polish.insert("1.0", result)))
+            def _update():
+                self._txt_polish.delete("1.0", "end")
+                self._txt_polish.insert("1.0", result)
+                self._stat_chars.set(str(len(result)))
+            self.after(0, _update)
         except Exception as e:
             self.after(0, messagebox.showerror, "潤稿錯誤", str(e))
         finally:
@@ -523,8 +595,10 @@ class App(tk.Tk):
     def _translate_worker(self, text: str, target: str):
         try:
             result = self.llm.translate(text, target)
-            self.after(0, lambda: (self._txt_trans.delete("1.0", "end"),
-                                   self._txt_trans.insert("1.0", result)))
+            def _update():
+                self._txt_trans.delete("1.0", "end")
+                self._txt_trans.insert("1.0", result)
+            self.after(0, _update)
         except Exception as e:
             self.after(0, messagebox.showerror, "翻譯錯誤", str(e))
         finally:
@@ -642,6 +716,71 @@ class App(tk.Tk):
         for w in (self._txt_raw, self._txt_polish, self._txt_trans):
             w.delete("1.0", "end")
 
+    def _dict_load(self):
+        for item in self._dict_tree.get_children():
+            self._dict_tree.delete(item)
+        for e in load_dictionary():
+            self._dict_tree.insert("", "end", values=(
+                "✓" if e.get("enabled", True) else "✗",
+                e.get("old", ""), e.get("new", ""),
+            ))
+
+    def _dict_add(self):
+        self._dict_tree.insert("", "end", values=("✓", "", ""))
+
+    def _dict_add_from_entry(self):
+        old = self._dict_old_var.get().strip()
+        new = self._dict_new_var.get().strip()
+        if not old:
+            messagebox.showwarning("提示", "原始詞不可為空")
+            return
+        self._dict_tree.insert("", "end", values=("✓", old, new))
+        self._dict_old_var.set("")
+        self._dict_new_var.set("")
+        self._dict_save()
+
+    def _dict_edit(self, event):
+        item = self._dict_tree.identify_row(event.y)
+        col = self._dict_tree.identify_column(event.x)
+        if not item:
+            return
+        vals = list(self._dict_tree.item(item, "values"))
+        if col == "#1":
+            vals[0] = "✗" if vals[0] == "✓" else "✓"
+            self._dict_tree.item(item, values=vals)
+            return
+        col_idx = int(col.replace("#", "")) - 1
+        x, y, w, h = self._dict_tree.bbox(item, col)
+        entry = tk.Entry(self._dict_tree, font=("Microsoft JhengHei", 10))
+        entry.place(x=x, y=y, width=w, height=h)
+        entry.insert(0, vals[col_idx])
+        entry.focus_set()
+        def _on_confirm(event=None):
+            vals[col_idx] = entry.get()
+            self._dict_tree.item(item, values=vals)
+            entry.destroy()
+        entry.bind("<Return>", _on_confirm)
+        entry.bind("<FocusOut>", _on_confirm)
+
+    def _dict_delete(self):
+        sel = self._dict_tree.selection()
+        if not sel:
+            return
+        for item in sel:
+            self._dict_tree.delete(item)
+        self._set_status("已刪除選取的規則")
+
+    def _dict_save(self):
+        entries = []
+        for item in self._dict_tree.get_children():
+            vals = self._dict_tree.item(item, "values")
+            entries.append({"enabled": vals[0] == "✓", "old": vals[1], "new": vals[2]})
+        save_dictionary(entries)
+        self._set_status("字典已儲存")
+
+    def _get_dict_entries(self) -> List[Dict]:
+        return load_dictionary()
+
     def _register_hotkey(self):
         hk = self.cfg.get("hotkey", "<Control-Shift-space>")
         try:
@@ -651,11 +790,12 @@ class App(tk.Tk):
             logger.warning("Hotkey failed: %s", e)
 
     def _set_status(self, msg: str):
+        self._status_msg = msg
         self._status_var.set(f"  {msg}")
 
     def _tick(self):
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        base = self._status_var.get().split("│")[0].strip() or "就緒"
+        base = getattr(self, "_status_msg", "就緒")
         self._status_var.set(f"  {base}   │   {now}")
         self.after(1000, self._tick)
 
