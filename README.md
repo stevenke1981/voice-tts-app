@@ -1,4 +1,4 @@
-# Steven's Voice Workspace  v1.0.0
+# Steven's Voice Workspace  v1.1.0
 
 > 自然說話，快速成文 — Python tkinter GUI + faster-whisper + Qwen3-TTS
 
@@ -18,6 +18,8 @@
 | 🔊 **Qwen3-TTS** | 多音色語音合成，支援情緒指令 |
 | 📋 **歷史紀錄** | 自動儲存，可瀏覽 / 載入 / 刪除 |
 | ⌨️ **熱鍵** | `Ctrl+Shift+Space` 一鍵錄音 / 停止 |
+| 📖 **自訂字典** | 自動替換修正常見語音辨識錯誤 |
+| 📋 **複製到剪貼簿** | 一鍵複製原文、整理後、翻譯文字 |
 | 🖥️ **跨平台** | Windows / macOS（含 Apple Silicon）/ Linux |
 
 ---
@@ -212,7 +214,7 @@ steven_voice.py
     ├── 輸入設定     → Whisper / LLM 參數調整
     ├── TTS 語音     → 音色、語速、合成播放
     ├── 歷史紀錄     → 瀏覽 / 載入 / 刪除紀錄
-    └── 字典         → 自訂替換規則（即將推出）
+    └── 字典         → 自訂替換規則（自動修正語音辨識錯誤）
 ```
 
 ---
