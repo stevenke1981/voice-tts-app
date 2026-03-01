@@ -755,7 +755,7 @@ class App(tk.Tk):
         entry.place(x=x, y=y, width=w, height=h)
         entry.insert(0, vals[col_idx])
         entry.focus_set()
-        def _on_confirm(_=None):
+        def _on_confirm(event=None):
             vals[col_idx] = entry.get()
             self._dict_tree.item(item, values=vals)
             entry.destroy()
